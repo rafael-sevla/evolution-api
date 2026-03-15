@@ -1,0 +1,112 @@
+databases:
+  - name: evolution-db
+    plan: starter
+    databaseName: evolution_api
+    user: evolution
+    postgresMajorVersion: "15"
+
+  - name: evolution-redis
+    plan: starter
+
+services:
+  - type: web
+    name: evolution-api
+    plan: starter
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    region: oregon
+    autoDeploy: true
+    healthCheckPath: /
+    disk:
+      name: evolution-data
+      mountPath: /evolution/instances
+      sizeGB: 1
+    envVars:
+      # ── Servidor ──
+      - key: SERVER_URL
+        fromService:
+          name: evolution-api
+          type: web
+          property: host
+        # Render injeta apenas o host, precisamos do https://
+        # Vamos usar um valor fixo após o primeiro deploy:
+        # value: https://SEU-APP.onrender.com
+      - key: SERVER_PORT
+        value: "8080"
+      - key: SERVER_NAME
+        value: evolution
+
+      # ── Banco de Dados ──
+      - key: DATABASE_PROVIDER
+        value: postgresql
+      - key: DATABASE_CONNECTION_URI
+        fromDatabase:
+          name: evolution-db
+          property: connectionString
+      - key: DATABASE_CONNECTION_CLIENT_NAME
+        value: evolution_exchange
+      - key: DATABASE_SAVE_DATA_INSTANCE
+        value: "true"
+      - key: DATABASE_SAVE_DATA_NEW_MESSAGE
+        value: "true"
+      - key: DATABASE_SAVE_MESSAGE_UPDATE
+        value: "true"
+      - key: DATABASE_SAVE_DATA_CONTACTS
+        value: "true"
+      - key: DATABASE_SAVE_DATA_CHATS
+        value: "true"
+      - key: DATABASE_SAVE_DATA_HISTORIC
+        value: "true"
+      - key: DATABASE_SAVE_DATA_LABELS
+        value: "true"
+      - key: DATABASE_SAVE_IS_ON_WHATSAPP
+        value: "true"
+      - key: DATABASE_SAVE_IS_ON_WHATSAPP_DAYS
+        value: "7"
+
+      # ── Redis ──
+      - key: CACHE_REDIS_ENABLED
+        value: "true"
+      - key: CACHE_REDIS_URI
+        fromService:
+          name: evolution-redis
+          type: redis
+          property: connectionString
+      - key: CACHE_REDIS_PREFIX_KEY
+        value: evolution
+      - key: CACHE_REDIS_TTL
+        value: "604800"
+      - key: CACHE_REDIS_SAVE_INSTANCES
+        value: "true"
+      - key: CACHE_LOCAL_ENABLED
+        value: "true"
+      - key: CACHE_LOCAL_TTL
+        value: "86400"
+
+      # ── Autenticação ──
+      - key: AUTHENTICATION_API_KEY
+        generateValue: true
+      - key: AUTHENTICATION_EXPOSE_IN_FETCH_INSTANCES
+        value: "false"
+
+      # ── Logs ──
+      - key: LOG_LEVEL
+        value: "ERROR,WARN,INFO,LOG"
+      - key: LOG_COLOR
+        value: "true"
+      - key: LOG_BAILEYS
+        value: "error"
+
+      # ── Configurações gerais ──
+      - key: LANGUAGE
+        value: "pt-BR"
+      - key: DEL_INSTANCE
+        value: "false"
+      - key: DEL_TEMP_INSTANCES
+        value: "true"
+      - key: CORS_ORIGIN
+        value: "*"
+      - key: CORS_METHODS
+        value: "POST,GET,PUT,DELETE"
+      - key: CORS_CREDENTIALS
+        value: "true"
