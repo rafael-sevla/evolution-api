@@ -1,12 +1,12 @@
 databases:
   - name: evolution-db
-    plan: starter
+    plan: basic-256mb
     databaseName: evolution_api
     user: evolution
     postgresMajorVersion: "15"
 
   - name: evolution-redis
-    plan: starter
+    plan: basic-128mb
 
 services:
   - type: web
