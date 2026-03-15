@@ -5,10 +5,13 @@ databases:
     user: evolution
     postgresMajorVersion: "15"
 
-  - name: evolution-redis
-    plan: basic-128mb
-
 services:
+  - type: redis
+    name: evolution-redis
+    plan: starter
+    maxmemoryPolicy: allkeys-lru
+    ipAllowList: []
+
   - type: web
     name: evolution-api
     plan: starter
