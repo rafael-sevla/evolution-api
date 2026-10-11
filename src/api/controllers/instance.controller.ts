@@ -5,7 +5,7 @@ import { PrismaRepository } from '@api/repository/repository.service';
 import { channelController, eventManager } from '@api/server.module';
 import { CacheService } from '@api/services/cache.service';
 import { WAMonitoringService } from '@api/services/monitor.service';
-import { removeInstanceSession } from '@api/services/remove-instance-session';
+import { dispatchInstanceLifecycleEvent, removeInstanceSession } from '@api/services/remove-instance-session';
 import { SettingsService } from '@api/services/settings.service';
 import { Events, Integration, wa } from '@api/types/wa.types';
 import { Auth, Chatwoot, ConfigService, HttpServer, WaBusiness } from '@config/env.config';
@@ -459,14 +459,14 @@ export class InstanceController {
         onLogoutError: (error) =>
           this.logger.warn(`Logout unavailable while deleting "${instanceName}": ${String(error)}`),
         remove: async () => {
-          try {
-            await waInstance?.sendDataWebhook(Events.INSTANCE_DELETE, {
-              instanceName,
-              instanceId: waInstance.instanceId,
-            });
-          } catch (error) {
-            this.logger.error(error);
-          }
+          dispatchInstanceLifecycleEvent(
+            async () =>
+              waInstance?.sendDataWebhook(Events.INSTANCE_DELETE, {
+                instanceName,
+                instanceId: waInstance.instanceId,
+              }),
+            (error) => this.logger.error(error),
+          );
           await this.waMonitor.removeInstanceNow(instanceName);
         },
       });

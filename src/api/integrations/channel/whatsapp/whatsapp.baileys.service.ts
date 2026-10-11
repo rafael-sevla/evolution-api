@@ -249,6 +249,7 @@ export class BaileysStartupService extends ChannelStartupService {
   private readonly msgRetryCounterCache: CacheStore = new NodeCache();
   private readonly userDevicesCache: CacheStore = new NodeCache({ stdTTL: 300000, useClones: false });
   private endSession = false;
+  private removing = false;
   private logBaileys = this.configService.get<Log>('LOG').BAILEYS;
   private eventProcessingQueue: Promise<void> = Promise.resolve();
 
@@ -262,6 +263,14 @@ export class BaileysStartupService extends ChannelStartupService {
 
   public get connectionStatus() {
     return this.stateConnection;
+  }
+
+  public stopForRemoval() {
+    this.removing = true;
+    this.endSession = true;
+    this.messageProcessor.onDestroy();
+    // Baileys end() closes the websocket and clears socket timers/listeners.
+    this.client?.end(undefined);
   }
 
   public async logoutInstance() {
@@ -332,6 +341,7 @@ export class BaileysStartupService extends ChannelStartupService {
   }
 
   private async connectionUpdate({ qr, connection, lastDisconnect }: Partial<ConnectionState>) {
+    if (this.removing) return;
     if (qr) {
       if (this.instance.qrcode.count === this.configService.get<QrCode>('QRCODE').LIMIT) {
         this.sendDataWebhook(Events.QRCODE_UPDATED, {
@@ -574,6 +584,7 @@ export class BaileysStartupService extends ChannelStartupService {
   }
 
   private async createClient(number?: string): Promise<WASocket> {
+    if (this.removing) return;
     this.instance.authState = await this.defineAuthState();
 
     const session = this.configService.get<ConfigSessionPhone>('CONFIG_SESSION_PHONE');
@@ -693,6 +704,8 @@ export class BaileysStartupService extends ChannelStartupService {
       },
     };
 
+    // A reconnect may have been awaiting network I/O when deletion started.
+    if (this.removing) return;
     this.endSession = false;
 
     this.client = makeWASocket(socketConfig);

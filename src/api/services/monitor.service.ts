@@ -13,6 +13,7 @@ import { rmSync } from 'fs';
 import { join } from 'path';
 
 import { CacheService } from './cache.service';
+import { dispatchInstanceLifecycleEvent } from './remove-instance-session';
 
 export class WAMonitoringService {
   constructor(
@@ -399,10 +400,14 @@ export class WAMonitoringService {
       // A logout event may already be cleaning the same session.
       await this.logoutCleanups.get(instanceName);
       try {
-        await this.waInstances[instanceName]?.sendDataWebhook(Events.REMOVE_INSTANCE, null);
+        this.waInstances[instanceName]?.stopForRemoval?.();
       } catch (error) {
         this.logger.error(error);
       }
+      dispatchInstanceLifecycleEvent(
+        async () => this.waInstances[instanceName]?.sendDataWebhook(Events.REMOVE_INSTANCE, null),
+        (error) => this.logger.error(error),
+      );
       this.clearDelInstanceTime(instanceName);
       await this.cleaningUp(instanceName);
       await this.cleaningStoreData(instanceName);
@@ -429,7 +434,10 @@ export class WAMonitoringService {
       if (this.removals.has(instanceName) || this.logoutCleanups.has(instanceName)) return;
       const cleanup = (async () => {
         try {
-          await this.waInstances[instanceName]?.sendDataWebhook(Events.LOGOUT_INSTANCE, null);
+          dispatchInstanceLifecycleEvent(
+            async () => this.waInstances[instanceName]?.sendDataWebhook(Events.LOGOUT_INSTANCE, null),
+            (error) => this.logger.error(error),
+          );
           this.clearDelInstanceTime(instanceName);
           if (this.configService.get<Chatwoot>('CHATWOOT').ENABLED) {
             this.waInstances[instanceName]?.clearCacheChatwoot();
