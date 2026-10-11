@@ -5,6 +5,7 @@ import { PrismaRepository } from '@api/repository/repository.service';
 import { channelController, eventManager } from '@api/server.module';
 import { CacheService } from '@api/services/cache.service';
 import { WAMonitoringService } from '@api/services/monitor.service';
+import { removeInstanceSession } from '@api/services/remove-instance-session';
 import { SettingsService } from '@api/services/settings.service';
 import { Events, Integration, wa } from '@api/types/wa.types';
 import { Auth, Chatwoot, ConfigService, HttpServer, WaBusiness } from '@config/env.config';
@@ -450,28 +451,28 @@ export class InstanceController {
   }
 
   public async deleteInstance({ instanceName }: InstanceDto) {
-    const { instance } = await this.connectionState({ instanceName });
     try {
-      const waInstances = this.waMonitor.waInstances[instanceName];
-      if (this.configService.get<Chatwoot>('CHATWOOT').ENABLED) waInstances?.clearCacheChatwoot();
-
-      if (instance.state === 'connecting' || instance.state === 'open') {
-        await this.logout({ instanceName });
-      }
-
-      try {
-        waInstances?.sendDataWebhook(Events.INSTANCE_DELETE, {
-          instanceName,
-          instanceId: waInstances.instanceId,
-        });
-      } catch (error) {
-        this.logger.error(error);
-      }
-
-      this.eventEmitter.emit('remove.instance', instanceName, 'inner');
+      const waInstance = this.waMonitor.waInstances[instanceName];
+      if (this.configService.get<Chatwoot>('CHATWOOT').ENABLED) waInstance?.clearCacheChatwoot();
+      await removeInstanceSession({
+        logout: async () => waInstance?.logoutInstance(),
+        onLogoutError: (error) =>
+          this.logger.warn(`Logout unavailable while deleting "${instanceName}": ${String(error)}`),
+        remove: async () => {
+          try {
+            await waInstance?.sendDataWebhook(Events.INSTANCE_DELETE, {
+              instanceName,
+              instanceId: waInstance.instanceId,
+            });
+          } catch (error) {
+            this.logger.error(error);
+          }
+          await this.waMonitor.removeInstanceNow(instanceName);
+        },
+      });
       return { status: 'SUCCESS', error: false, response: { message: 'Instance deleted' } };
     } catch (error) {
-      throw new BadRequestException(error.toString());
+      throw new InternalServerErrorException(String(error));
     }
   }
 }

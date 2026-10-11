@@ -389,38 +389,63 @@ export class WAMonitoringService {
     );
   }
 
+  private readonly removals = new Map<string, Promise<void>>();
+  private readonly logoutCleanups = new Map<string, Promise<void>>();
+
+  public async removeInstanceNow(instanceName: string): Promise<void> {
+    const existing = this.removals.get(instanceName);
+    if (existing) return existing;
+    const removal = (async () => {
+      // A logout event may already be cleaning the same session.
+      await this.logoutCleanups.get(instanceName);
+      try {
+        await this.waInstances[instanceName]?.sendDataWebhook(Events.REMOVE_INSTANCE, null);
+      } catch (error) {
+        this.logger.error(error);
+      }
+      this.clearDelInstanceTime(instanceName);
+      await this.cleaningUp(instanceName);
+      await this.cleaningStoreData(instanceName);
+      delete this.waInstances[instanceName];
+      this.logger.warn(`Instance "${instanceName}" - REMOVED`);
+    })();
+    this.removals.set(instanceName, removal);
+    try {
+      await removal;
+    } finally {
+      this.removals.delete(instanceName);
+    }
+  }
+
   private removeInstance() {
     this.eventEmitter.on('remove.instance', async (instanceName: string) => {
       try {
-        await this.waInstances[instanceName]?.sendDataWebhook(Events.REMOVE_INSTANCE, null);
-
-        this.clearDelInstanceTime(instanceName);
-
-        this.cleaningUp(instanceName);
-        this.cleaningStoreData(instanceName);
-      } finally {
-        this.logger.warn(`Instance "${instanceName}" - REMOVED`);
-      }
-
-      try {
-        delete this.waInstances[instanceName];
+        await this.removeInstanceNow(instanceName);
       } catch (error) {
         this.logger.error(error);
       }
     });
     this.eventEmitter.on('logout.instance', async (instanceName: string) => {
-      try {
-        await this.waInstances[instanceName]?.sendDataWebhook(Events.LOGOUT_INSTANCE, null);
-
-        this.clearDelInstanceTime(instanceName);
-
-        if (this.configService.get<Chatwoot>('CHATWOOT').ENABLED) {
-          this.waInstances[instanceName]?.clearCacheChatwoot();
+      if (this.removals.has(instanceName) || this.logoutCleanups.has(instanceName)) return;
+      const cleanup = (async () => {
+        try {
+          await this.waInstances[instanceName]?.sendDataWebhook(Events.LOGOUT_INSTANCE, null);
+          this.clearDelInstanceTime(instanceName);
+          if (this.configService.get<Chatwoot>('CHATWOOT').ENABLED) {
+            this.waInstances[instanceName]?.clearCacheChatwoot();
+          }
+          await this.cleaningUp(instanceName);
+        } catch (error) {
+          this.logger.error(error);
+        } finally {
+          this.logger.warn(`Instance "${instanceName}" - LOGOUT`);
         }
-
-        this.cleaningUp(instanceName);
+      })();
+      this.logoutCleanups.set(instanceName, cleanup);
+      try {
+        await cleanup;
       } finally {
-        this.logger.warn(`Instance "${instanceName}" - LOGOUT`);
+        this.logoutCleanups.delete(instanceName);
       }
     });
   }
