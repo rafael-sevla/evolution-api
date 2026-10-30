@@ -19,7 +19,7 @@ jobs:
     - name: Install Node
       uses: actions/setup-node@v5
       with:
-        node-version: 20.x
+        node-version: 24.x
 
     - name: Cache node modules
       uses: actions/cache@v4
@@ -37,6 +37,9 @@ jobs:
 
     - name: Generate Prisma client
       run: npm run db:generate
+
+    - name: Check message events and instance lifecycle
+      run: npm run test:message-events && npm run test:instance-removal
 
     - name: Check build
       run: npm run build

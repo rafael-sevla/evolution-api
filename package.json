@@ -11,6 +11,7 @@
     "dev:server": "tsx watch ./src/main.ts",
     "test": "tsx watch ./test/all.test.ts",
     "test:instance-removal": "node --import tsx --test ./test/remove-instance-session.test.ts ./test/instance-removal-lifecycle.test.ts",
+    "test:message-events": "node --import tsx --test ./test/message-key.test.ts ./test/message-event-recovery.test.ts",
     "lint": "eslint --fix --ext .ts src",
     "lint:check": "eslint --ext .ts src",
     "commit": "cz",

@@ -153,6 +153,7 @@ import { PassThrough, Readable } from 'stream';
 import { v4 } from 'uuid';
 
 import { BaileysMessageProcessor } from './baileysMessage.processor';
+import { isUsableMessageJid, resolveMessageKey, storedMessageContent } from './message-key';
 import { useVoiceCallsBaileys } from './voiceCalls/useVoiceCallsBaileys';
 
 export interface ExtendedIMessageKey extends proto.IMessageKey {
@@ -531,6 +532,7 @@ export class BaileysStartupService extends ChannelStartupService {
   }
 
   private async getMessage(key: proto.IMessageKey, full = false) {
+    if (typeof key?.id !== 'string' || !key.id.trim()) return undefined;
     try {
       // Use raw SQL to avoid JSON path issues
       const webMessageInfo = (await this.prismaRepository.$queryRaw`
@@ -539,27 +541,13 @@ export class BaileysStartupService extends ChannelStartupService {
         AND "key"->>'id' = ${key.id}
       `) as proto.IWebMessageInfo[];
 
-      if (full) {
-        return webMessageInfo[0];
-      }
-      if (webMessageInfo[0].message?.pollCreationMessage) {
-        const messageSecretBase64 = webMessageInfo[0].message?.messageContextInfo?.messageSecret;
-
-        if (typeof messageSecretBase64 === 'string') {
-          const messageSecret = Buffer.from(messageSecretBase64, 'base64');
-
-          const msg = {
-            messageContextInfo: { messageSecret },
-            pollCreationMessage: webMessageInfo[0].message?.pollCreationMessage,
-          };
-
-          return msg;
-        }
-      }
-
-      return webMessageInfo[0].message;
-    } catch {
-      return { conversation: '' };
+      return storedMessageContent(webMessageInfo[0], full);
+    } catch (error) {
+      this.logger.warn({
+        event: 'message_lookup_failed',
+        reason: error instanceof Error ? error.name : 'UnknownError',
+      });
+      return undefined;
     }
   }
 
@@ -657,7 +645,8 @@ export class BaileysStartupService extends ChannelStartupService {
       },
       msgRetryCounterCache: this.msgRetryCounterCache,
       generateHighQualityLinkPreview: true,
-      getMessage: async (key) => (await this.getMessage(key)) as Promise<proto.IMessage>,
+      getMessage: async (key) =>
+        isUsableMessageJid(key?.remoteJid) ? ((await this.getMessage(key)) as proto.IMessage) : undefined,
       ...browserOptions,
       markOnlineOnConnect: this.localSettings.alwaysOnline,
       retryRequestDelayMs: 350,
@@ -668,6 +657,8 @@ export class BaileysStartupService extends ChannelStartupService {
       qrTimeout: 45_000,
       emitOwnEvents: false,
       shouldIgnoreJid: (jid) => {
+        // Reject malformed receipts before Baileys retries or changes Signal sessions.
+        if (!isUsableMessageJid(jid)) return true;
         if (this.localSettings.syncFullHistory && isJidGroup(jid)) {
           return false;
         }
@@ -1097,7 +1088,17 @@ export class BaileysStartupService extends ChannelStartupService {
       settings: any,
     ) => {
       try {
-        for (const received of messages) {
+        for (const incoming of messages) {
+          const key = resolveMessageKey(incoming?.key);
+          if (!key) {
+            this.logger.warn({
+              event: 'message_event_skipped',
+              kind: 'messages.upsert',
+              reason: 'missing_message_key',
+            });
+            continue;
+          }
+          const received = { ...incoming, key };
           if (
             received?.messageStubParameters?.some?.((param) =>
               [
@@ -1112,7 +1113,7 @@ export class BaileysStartupService extends ChannelStartupService {
               ].some((err) => param?.includes?.(err)),
             )
           ) {
-            this.logger.warn(`Message ignored with messageStubParameters: ${JSON.stringify(received, null, 2)}`);
+            this.logger.warn({ event: 'message_unavailable', reason: 'decryption_failed' });
             continue;
           }
           if (received.message?.conversation || received.message?.extendedTextMessage?.text) {
@@ -1573,7 +1574,32 @@ export class BaileysStartupService extends ChannelStartupService {
 
       const readChatToUpdate: Record<string, true> = {}; // {remoteJid: true}
 
-      for await (const { key, update } of args) {
+      for await (const { key: incomingKey, update } of args) {
+        let key = resolveMessageKey(incomingKey);
+        let findMessage: Message | undefined;
+        const configDatabaseData = this.configService.get<Database>('DATABASE').SAVE_DATA;
+        if (
+          !key &&
+          typeof incomingKey?.id === 'string' &&
+          incomingKey.id.trim() &&
+          (configDatabaseData.HISTORIC || configDatabaseData.NEW_MESSAGE)
+        ) {
+          // A receipt may omit its conversation. Recover only an unambiguous key in this instance.
+          const candidates = await this.prismaRepository.$queryRaw<Message[]>`
+            SELECT * FROM "Message"
+            WHERE "instanceId" = ${this.instanceId}
+            AND "key"->>'id' = ${incomingKey.id}
+            LIMIT 2
+          `;
+          if (candidates.length === 1) {
+            findMessage = candidates[0];
+            key = resolveMessageKey(incomingKey, findMessage.key);
+          }
+        }
+        if (!key) {
+          this.logger.warn({ event: 'message_event_skipped', kind: 'messages.update', reason: 'missing_message_key' });
+          continue;
+        }
         if (settings?.groupsIgnore && key.remoteJid?.includes('@g.us')) {
           continue;
         }
@@ -1637,8 +1663,6 @@ export class BaileysStartupService extends ChannelStartupService {
             message.message = update.message;
           }
 
-          let findMessage: any;
-          const configDatabaseData = this.configService.get<Database>('DATABASE').SAVE_DATA;
           if (configDatabaseData.HISTORIC || configDatabaseData.NEW_MESSAGE) {
             // Use raw SQL to avoid JSON path issues
             const protocolMapKey = `protocol_${key.id}`;
@@ -1646,20 +1670,27 @@ export class BaileysStartupService extends ChannelStartupService {
 
             if (originalMessageId) {
               message.keyId = originalMessageId;
+              if (originalMessageId !== key.id) findMessage = undefined;
             }
 
             const searchId = originalMessageId || key.id;
 
-            const messages = (await this.prismaRepository.$queryRaw`
-              SELECT * FROM "Message"
-              WHERE "instanceId" = ${this.instanceId}
-              AND "key"->>'id' = ${searchId}
-              LIMIT 1
-            `) as any[];
-            findMessage = messages[0] || null;
+            if (!findMessage) {
+              const messages = await this.prismaRepository.$queryRaw<Message[]>`
+                SELECT * FROM "Message"
+                WHERE "instanceId" = ${this.instanceId}
+                AND "key"->>'id' = ${searchId}
+                LIMIT 1
+              `;
+              findMessage = messages[0];
+            }
 
             if (!findMessage?.id) {
-              this.logger.warn(`Original message not found for update. Skipping. Key: ${JSON.stringify(key)}`);
+              this.logger.warn({
+                event: 'message_event_skipped',
+                kind: 'messages.update',
+                reason: 'original_not_found',
+              });
               continue;
             }
             message.messageId = findMessage.id;
