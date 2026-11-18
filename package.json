@@ -11,7 +11,7 @@
     "dev:server": "tsx watch ./src/main.ts",
     "test": "tsx watch ./test/all.test.ts",
     "test:instance-removal": "node --import tsx --test ./test/remove-instance-session.test.ts ./test/instance-removal-lifecycle.test.ts",
-    "test:message-events": "node --import tsx --test ./test/message-key.test.ts ./test/message-event-recovery.test.ts ./test/status-stanza-ack.test.ts",
+    "test:message-events": "node --import tsx --test ./test/message-key.test.ts ./test/message-event-recovery.test.ts ./test/status-stanza-ack.test.ts ./test/baileys-patch.test.ts",
     "lint": "eslint --fix --ext .ts src",
     "lint:check": "eslint --ext .ts src",
     "commit": "cz",
@@ -22,7 +22,8 @@
     "db:studio": "node runWithProvider.js \"npx prisma studio --schema ./prisma/DATABASE_PROVIDER-schema.prisma\"",
     "db:migrate:dev": "node runWithProvider.js \"rm -rf ./prisma/migrations && cp -r ./prisma/DATABASE_PROVIDER-migrations ./prisma/migrations && npx prisma migrate dev --schema ./prisma/DATABASE_PROVIDER-schema.prisma && cp -r ./prisma/migrations/* ./prisma/DATABASE_PROVIDER-migrations\"",
     "db:migrate:dev:win": "node runWithProvider.js \"xcopy /E /I prisma\\DATABASE_PROVIDER-migrations prisma\\migrations && npx prisma migrate dev --schema prisma\\DATABASE_PROVIDER-schema.prisma\"",
-    "prepare": "husky"
+    "prepare": "husky",
+    "postinstall": "node ./scripts/patch-baileys.mjs"
   },
   "repository": {
     "type": "git",
