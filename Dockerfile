@@ -12,6 +12,8 @@ WORKDIR /evolution
 COPY ./package*.json ./
 COPY ./tsconfig.json ./
 COPY ./tsup.config.ts ./
+# Patch do Baileys aplicado no postinstall do npm ci (ver scripts/patch-baileys.mjs).
+COPY ./scripts/patch-baileys.mjs ./scripts/patch-baileys.mjs
 
 RUN npm ci --no-audit --no-fund --silent
 
