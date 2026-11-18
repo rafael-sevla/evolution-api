@@ -154,6 +154,7 @@ import { v4 } from 'uuid';
 
 import { BaileysMessageProcessor } from './baileysMessage.processor';
 import { isUsableMessageJid, resolveMessageKey, storedMessageContent } from './message-key';
+import { registerStatusStanzaAck } from './status-stanza-ack';
 import { useVoiceCallsBaileys } from './voiceCalls/useVoiceCallsBaileys';
 
 export interface ExtendedIMessageKey extends proto.IMessageKey {
@@ -700,6 +701,9 @@ export class BaileysStartupService extends ChannelStartupService {
     this.endSession = false;
 
     this.client = makeWASocket(socketConfig);
+
+    // Sem este ack o WhatsApp derruba a conexão ~50 min depois de um <status> (Baileys#2858).
+    registerStatusStanzaAck(this.client, (error) => this.logger.warn(`Falha ao confirmar stanza <status>: ${error}`));
 
     if (this.localSettings.wavoipToken && this.localSettings.wavoipToken.length > 0) {
       useVoiceCallsBaileys(this.localSettings.wavoipToken, this.client, this.connectionStatus.state as any, true);
